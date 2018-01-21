@@ -51,6 +51,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="InsertWindowOrderFlags.cs" />
     <Compile Include="SetWindowPositionFlags.cs" />
     <Compile Include="WindowManager.cs" />
     <Compile Include="WindowMoverForm.cs">
