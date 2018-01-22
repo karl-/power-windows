@@ -5,7 +5,9 @@ using System.Text;
 
 namespace Parabox.WindowMover
 {
-	class ActionMap
+	enum WindowAction
 	{
+		Move,
+		Resize
 	}
 }

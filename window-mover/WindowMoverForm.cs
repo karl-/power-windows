@@ -33,7 +33,7 @@ namespace Parabox.WindowMover
 			m_NotifyIcon.ContextMenu = m_ContextMenu;
 			m_NotifyIcon.DoubleClick += new EventHandler(OnNotifyIconDoubleClicked);
 
-			m_WindowManager = new WindowManager(this);
+			m_WindowManager = new WindowManager();
 
 			InitializeComponent();
 		}
