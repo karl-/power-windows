@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using WindowsInput;
 using WindowsInput.Native;
 using System.Windows.Input;
+using System.Linq;
 
 namespace Parabox.WindowMover
 {
@@ -50,7 +51,7 @@ namespace Parabox.WindowMover
 		HashSet<Keys> m_QueuedKeyInput;
 		HashSet<Keys> m_UsedKeyInput;
 		HashSet<Keys> m_IgnoreNextInput;
-		Keys m_PressedKey;
+		HashSet<Keys> m_PressedKeys;
 
 		public WindowManager()
 		{
@@ -70,6 +71,8 @@ namespace Parabox.WindowMover
 			m_QueuedKeyInput = new HashSet<Keys>();
 			m_UsedKeyInput = new HashSet<Keys>();
 			m_IgnoreNextInput = new HashSet<Keys>();
+
+			m_PressedKeys = new HashSet<Keys>();
 		}
 
 		~WindowManager()
@@ -87,23 +90,28 @@ namespace Parabox.WindowMover
 
 		void OnKeyDown(object sender, KeyEventArgs args)
 		{
-			if(m_IgnoreNextInput.Contains(args.KeyData))
+			m_PressedKeys.Add(args.KeyCode);
+
+			if (m_IgnoreNextInput.Contains(args.KeyData))
 			{
 				Console.WriteLine("Ignore Simulated: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
+				Console.WriteLine("    Passed: " + args.KeyCode);
 				m_IgnoreNextInput.Remove(args.KeyData);
-				return; 
+				return;
 			}
 
 			Console.WriteLine("OnKeyDown: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
-
-			m_PressedKey = args.KeyData;
-
-			if(m_PressedKey == m_InputMap.keys && m_QueuedKeyInput.Add(m_PressedKey))
+			
+			if (args.KeyData == m_InputMap.keys)
 			{
-				Console.WriteLine("Supressed: " + args.KeyData);
+				Console.WriteLine("    Supressed: " + args.KeyData);
 				args.SuppressKeyPress = true;
 				args.Handled = true;
 				m_QueuedKeyInput.Add(args.KeyData);
+			}
+			else
+			{
+				Console.WriteLine("    Passed: " + args.KeyData);
 			}
 		}
 
@@ -111,8 +119,11 @@ namespace Parabox.WindowMover
 		{
 			Console.WriteLine("OnKeyUp: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
 
+			m_PressedKeys.Remove(args.KeyCode);
+
 			if (m_QueuedKeyInput.Contains(args.KeyData))
 			{
+				Console.WriteLine("    Suppressed: " + args.KeyData);
 				args.Handled = true;
 				args.SuppressKeyPress = true;
 
@@ -121,7 +132,7 @@ namespace Parabox.WindowMover
 				{
 					m_QueuedKeyInput.Remove(args.KeyData);
 					m_UsedKeyInput.Remove(args.KeyData);
-					Console.WriteLine(args.KeyData + " was ignored");
+					Console.WriteLine("    was ignored: " + args.KeyData);
 				}
 				// if it was not used, simulate it
 				else
@@ -133,31 +144,40 @@ namespace Parabox.WindowMover
 					{
 						List<VirtualKeyCode> modifiers, keys;
 						KeysUtility.VirtualKeyAndModifiersFromKey(args.Modifiers, args.KeyCode, out modifiers, out keys);
+						Console.WriteLine("    sending virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
 						m_InputSimulator.Keyboard.ModifiedKeyStroke(modifiers, keys);
-						Console.WriteLine("sent virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
+						Console.WriteLine("    sent virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
 					}
 					else
 					{
 						VirtualKeyCode vk = KeysUtility.VirtualKeyFromKeys(args.KeyCode);
+						Console.WriteLine("    sending virtual key: " + vk);
 						m_InputSimulator.Keyboard.KeyDown(vk);
 						m_InputSimulator.Keyboard.KeyUp(vk);
-						Console.WriteLine("sent virtual key: " + vk);
+						Console.WriteLine("    sent virtual key: " + vk);
 					}
 				}
+			}
+			else
+			{
+				Console.WriteLine("    Passed: " + args.KeyData);
 			}
 		}
 
 		void OnMouseDownExt(object sender, MouseEventExtArgs args)
 		{
-			if (args.Button == m_InputMap.mouseButtons && m_PressedKey == m_InputMap.keys)
+			Console.WriteLine("buttons:");
+			foreach (var v in m_PressedKeys)
+				Console.WriteLine(v.ToString());
+
+			if (args.Button == m_InputMap.mouseButtons && m_PressedKeys.Count == 1 && m_PressedKeys.First().Equals(m_InputMap.keys))
 			{
 				m_DraggingWindowHandle = WindowFromPoint(args.Location);
 				Rect windowRect = new Rect();
 
 				if(m_DraggingWindowHandle != IntPtr.Zero && GetWindowRect(m_DraggingWindowHandle, ref windowRect))
 				{
-					m_UsedKeyInput.Add(m_PressedKey);
-
+					m_UsedKeyInput.Add(m_InputMap.keys);
 					m_WindowRectOrigin = (Rectangle) windowRect;
 
 					m_CursorOffset.X = args.X - m_WindowRectOrigin.Location.X;
