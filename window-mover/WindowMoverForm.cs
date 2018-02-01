@@ -36,6 +36,9 @@ namespace Parabox.WindowMover
 			m_WindowManager = new WindowManager();
 
 			InitializeComponent();
+
+			testToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.N;
+			testToolStripMenuItem.ShowShortcutKeys = true;
 		}
 
 		void WindowMoverForm_Load(object sender, EventArgs e)
@@ -58,6 +61,11 @@ namespace Parabox.WindowMover
 			{
 				WindowState = FormWindowState.Minimized;
 			}
+		}
+
+		private void testToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			Console.WriteLine("====> clicked the button (or shortcut!) <====");
 		}
 	}
 }

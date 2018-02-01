@@ -27,6 +27,13 @@ namespace Parabox.WindowMover
 			}
 		}
 
+		[Flags]
+		enum KeyPressState
+		{
+			Down = 0x1,
+			Up = 0x2
+		}
+
 		[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
 		static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int y, int cx, int cy, uint wFlags);
 
@@ -48,9 +55,11 @@ namespace Parabox.WindowMover
 		Rectangle m_WindowRectCurrent;
 
 		InputMap m_InputMap;
-		HashSet<Keys> m_QueuedKeyInput;
-		HashSet<Keys> m_UsedKeyInput;
-		HashSet<Keys> m_IgnoreNextInput;
+
+		Keys m_QueuedKeyInput;
+		Keys m_IgnoreNextInput;
+		bool m_DidUseKeyInput;
+
 		HashSet<Keys> m_PressedKeys;
 
 		public WindowManager()
@@ -65,12 +74,12 @@ namespace Parabox.WindowMover
 			m_GlobalHook.KeyDown += OnKeyDown;
 			m_GlobalHook.KeyUp+= OnKeyUp;
 
-			m_InputMap = new InputMap(Keys.LWin, MouseButtons.Left, WindowAction.Move);
+			m_InputMap = new InputMap(Keys.LMenu, MouseButtons.Left, WindowAction.Move);
 			m_InputSimulator = new InputSimulator();
 
-			m_QueuedKeyInput = new HashSet<Keys>();
-			m_UsedKeyInput = new HashSet<Keys>();
-			m_IgnoreNextInput = new HashSet<Keys>();
+			m_QueuedKeyInput = Keys.None;
+			m_IgnoreNextInput = Keys.None;
+			m_DidUseKeyInput = false;
 
 			m_PressedKeys = new HashSet<Keys>();
 		}
@@ -88,87 +97,115 @@ namespace Parabox.WindowMover
 			m_GlobalHook.Dispose();
 		}
 
+		[System.Diagnostics.Conditional("DEBUG_KEY_PRESS")]
+		static void LogKeyPress(string txt)
+		{
+			Console.WriteLine(txt);
+		}
+
 		void OnKeyDown(object sender, KeyEventArgs args)
 		{
-			m_PressedKeys.Add(args.KeyCode);
+			bool firstPress = m_PressedKeys.Add(args.KeyCode);
 
-			if (m_IgnoreNextInput.Contains(args.KeyData))
+			if (m_IgnoreNextInput == args.KeyData)
 			{
-				Console.WriteLine("Ignore Simulated: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
-				Console.WriteLine("    Passed: " + args.KeyCode);
-				m_IgnoreNextInput.Remove(args.KeyData);
+				if (firstPress)
+				{
+					LogKeyPress("Ignore Simulated: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
+					LogKeyPress("    Passed: " + args.KeyCode);
+				}
+
+				m_IgnoreNextInput = Keys.None;
+
 				return;
 			}
 
-			Console.WriteLine("OnKeyDown: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
+			if (firstPress)
+				LogKeyPress("OnKeyDown: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
 			
 			if (args.KeyData == m_InputMap.keys)
 			{
-				Console.WriteLine("    Supressed: " + args.KeyData);
+				if (firstPress)
+					LogKeyPress("    Supressed: " + args.KeyData);
 				args.SuppressKeyPress = true;
 				args.Handled = true;
-				m_QueuedKeyInput.Add(args.KeyData);
+				m_QueuedKeyInput = m_InputMap.keys;
 			}
 			else
 			{
-				Console.WriteLine("    Passed: " + args.KeyData);
+				if(m_QueuedKeyInput != Keys.None)
+					SendQueuedInput(KeyPressState.Down);
+
+				if (firstPress)
+					LogKeyPress("    Passed: " + args.KeyData);
 			}
+		}
+
+		void SendQueuedInput(KeyPressState state)
+		{
+			if (m_QueuedKeyInput == Keys.None)
+				return;
+
+			//if (m_QueuedKeyInput.Modifiers > 0)
+			//{
+			//	List<VirtualKeyCode> modifiers, keys;
+			//	KeysUtility.VirtualKeyAndModifiersFromKey(args.Modifiers, args.KeyCode, out modifiers, out keys);
+			//	LogKeyPress("    sending virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
+			//	m_InputSimulator.Keyboard.ModifiedKeyStroke(modifiers, keys);
+			//	Console.WriteLine("    sent virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
+			//}
+			//else
+			//{
+			VirtualKeyCode vk = KeysUtility.VirtualKeyFromKeys(m_QueuedKeyInput);
+			m_IgnoreNextInput = m_QueuedKeyInput;
+			m_QueuedKeyInput = Keys.None;
+			LogKeyPress("    sending virtual key: " + vk);
+			if((state & KeyPressState.Down) > 0)
+				m_InputSimulator.Keyboard.KeyDown(vk);
+			if((state & KeyPressState.Up) > 0)
+				m_InputSimulator.Keyboard.KeyUp(vk);
+			LogKeyPress("    sent virtual key: " + vk);
+			//}
 		}
 
 		void OnKeyUp(object sender, KeyEventArgs args)
 		{
-			Console.WriteLine("OnKeyUp: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
+			LogKeyPress("OnKeyUp: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
 
 			m_PressedKeys.Remove(args.KeyCode);
 
-			if (m_QueuedKeyInput.Contains(args.KeyData))
+			if (m_QueuedKeyInput == args.KeyCode)
 			{
-				Console.WriteLine("    Suppressed: " + args.KeyData);
+				LogKeyPress("    Suppressed: " + args.KeyData);
 				args.Handled = true;
 				args.SuppressKeyPress = true;
 
 				// If the shortcut was used, discard the key event
-				if (m_UsedKeyInput.Contains(args.KeyData))
+				if (m_DidUseKeyInput)
 				{
-					m_QueuedKeyInput.Remove(args.KeyData);
-					m_UsedKeyInput.Remove(args.KeyData);
-					Console.WriteLine("    was ignored: " + args.KeyData);
+					LogKeyPress("    was ignored: " + args.KeyData);
 				}
 				// if it was not used, simulate it
 				else
 				{
-					m_IgnoreNextInput.Add(args.KeyData);
-					m_QueuedKeyInput.Remove(args.KeyData);
-
-					if (args.Modifiers > 0)
-					{
-						List<VirtualKeyCode> modifiers, keys;
-						KeysUtility.VirtualKeyAndModifiersFromKey(args.Modifiers, args.KeyCode, out modifiers, out keys);
-						Console.WriteLine("    sending virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
-						m_InputSimulator.Keyboard.ModifiedKeyStroke(modifiers, keys);
-						Console.WriteLine("    sent virtual keys: [" + string.Join(",", modifiers.ToArray()) + "] " + string.Join(",", keys.ToArray()));
-					}
-					else
-					{
-						VirtualKeyCode vk = KeysUtility.VirtualKeyFromKeys(args.KeyCode);
-						Console.WriteLine("    sending virtual key: " + vk);
-						m_InputSimulator.Keyboard.KeyDown(vk);
-						m_InputSimulator.Keyboard.KeyUp(vk);
-						Console.WriteLine("    sent virtual key: " + vk);
-					}
+					SendQueuedInput(KeyPressState.Down | KeyPressState.Up);
 				}
+
+				m_QueuedKeyInput = Keys.None;
+				m_DidUseKeyInput = false;
 			}
 			else
 			{
-				Console.WriteLine("    Passed: " + args.KeyData);
+				LogKeyPress("    Passed: " + args.KeyData);
 			}
 		}
 
 		void OnMouseDownExt(object sender, MouseEventExtArgs args)
 		{
-			Console.WriteLine("buttons:");
+			LogKeyPress("OnMouseDown (keys):");
+
 			foreach (var v in m_PressedKeys)
-				Console.WriteLine(v.ToString());
+				LogKeyPress("    " + v.ToString());
 
 			if (args.Button == m_InputMap.mouseButtons && m_PressedKeys.Count == 1 && m_PressedKeys.First().Equals(m_InputMap.keys))
 			{
@@ -177,7 +214,7 @@ namespace Parabox.WindowMover
 
 				if(m_DraggingWindowHandle != IntPtr.Zero && GetWindowRect(m_DraggingWindowHandle, ref windowRect))
 				{
-					m_UsedKeyInput.Add(m_InputMap.keys);
+					m_DidUseKeyInput = true;
 					m_WindowRectOrigin = (Rectangle) windowRect;
 
 					m_CursorOffset.X = args.X - m_WindowRectOrigin.Location.X;
