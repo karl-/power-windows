@@ -1,5 +1,6 @@
-﻿using System;
-using System.Runtime.InteropServices;
+﻿//#define DEBUG_KEY_PRESS
+
+using System;
 using System.Windows.Forms;
 using Gma.System.MouseKeyHook;
 using System.Drawing;
@@ -13,19 +14,6 @@ namespace Parabox.WindowMover
 {
 	class WindowManager
 	{
-		[StructLayout(LayoutKind.Sequential)]
-		struct Rect
-		{
-			public int left;
-			public int top;
-			public int right;
-			public int bottom;
-
-			public static explicit operator Rectangle(Rect rect)
-			{
-				return new Rectangle(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
-			}
-		}
 
 		[Flags]
 		enum KeyPressState
@@ -34,26 +22,33 @@ namespace Parabox.WindowMover
 			Up = 0x2
 		}
 
-		[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
-		static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int y, int cx, int cy, uint wFlags);
+		class WindowState
+		{
+			public IntPtr handle;
+			public Point cursorOffset;
+			public Rectangle origin;
+			public Rectangle position;
+			public bool isDragging;
 
-		[DllImport("user32.dll", EntryPoint = "GetWindowRect")]
-		static extern bool GetWindowRect(IntPtr hWnd, ref Rect rect);
+			public WindowState()
+			{
+				Clear();
+			}
 
-		[DllImport("user32.dll", EntryPoint = "WindowFromPoint")]
-		static extern IntPtr WindowFromPoint(Point point);
+			public void Clear()
+			{
+				handle = IntPtr.Zero;
+				cursorOffset = Point.Empty;
+				origin = Rectangle.Empty;
+				position = Rectangle.Empty;
+				isDragging = false;
+			}
+		}
 
-		[DllImport("Kernel32.dll", EntryPoint = "GetLastError")]
-		static extern uint GetLastError();
-						
+		WindowState m_WindowState;
+
 		IKeyboardMouseEvents m_GlobalHook;
-		bool m_IsDragging;
-		IntPtr m_DraggingWindowHandle;
-		Point m_CursorOffset;
-		Rectangle m_WindowRectOrigin;
 		IInputSimulator m_InputSimulator;
-		Rectangle m_WindowRectCurrent;
-
 		InputMap m_InputMap;
 
 		Keys m_QueuedKeyInput;
@@ -74,7 +69,7 @@ namespace Parabox.WindowMover
 			m_GlobalHook.KeyDown += OnKeyDown;
 			m_GlobalHook.KeyUp+= OnKeyUp;
 
-			m_InputMap = new InputMap(Keys.LMenu, MouseButtons.Left, WindowAction.Move);
+			m_InputMap = new InputMap(Keys.LWin, MouseButtons.Left, WindowAction.Move);
 			m_InputSimulator = new InputSimulator();
 
 			m_QueuedKeyInput = Keys.None;
@@ -82,6 +77,8 @@ namespace Parabox.WindowMover
 			m_DidUseKeyInput = false;
 
 			m_PressedKeys = new HashSet<Keys>();
+
+			m_WindowState = new WindowState();
 		}
 
 		~WindowManager()
@@ -122,7 +119,7 @@ namespace Parabox.WindowMover
 
 			if (firstPress)
 				LogKeyPress("OnKeyDown: " + args.KeyData + " [" + args.KeyCode + ", " + args.Modifiers + "]");
-			
+
 			if (args.KeyData == m_InputMap.keys)
 			{
 				if (firstPress)
@@ -159,7 +156,7 @@ namespace Parabox.WindowMover
 			VirtualKeyCode vk = KeysUtility.VirtualKeyFromKeys(m_QueuedKeyInput);
 			m_IgnoreNextInput = m_QueuedKeyInput;
 			m_QueuedKeyInput = Keys.None;
-			LogKeyPress("    sending virtual key: " + vk);
+			LogKeyPress("    sending virtual key " + state + " : " + vk);
 			if((state & KeyPressState.Down) > 0)
 				m_InputSimulator.Keyboard.KeyDown(vk);
 			if((state & KeyPressState.Up) > 0)
@@ -184,6 +181,7 @@ namespace Parabox.WindowMover
 				if (m_DidUseKeyInput)
 				{
 					LogKeyPress("    was ignored: " + args.KeyData);
+					SendQueuedInput(KeyPressState.Up);
 				}
 				// if it was not used, simulate it
 				else
@@ -209,82 +207,72 @@ namespace Parabox.WindowMover
 
 			if (args.Button == m_InputMap.mouseButtons && m_PressedKeys.Count == 1 && m_PressedKeys.First().Equals(m_InputMap.keys))
 			{
-				m_DraggingWindowHandle = WindowFromPoint(args.Location);
-				Rect windowRect = new Rect();
+				m_WindowState.handle = WindowUtility.WindowFromPoint(args.Location);
+				Rectangle windowRect = new Rectangle();
 
-				if(m_DraggingWindowHandle != IntPtr.Zero && GetWindowRect(m_DraggingWindowHandle, ref windowRect))
+				if(m_WindowState.handle != IntPtr.Zero && WindowUtility.GetWindowRect(m_WindowState.handle, ref windowRect))
 				{
 					m_DidUseKeyInput = true;
-					m_WindowRectOrigin = (Rectangle) windowRect;
+					m_WindowState.origin = windowRect;
 
-					m_CursorOffset.X = args.X - m_WindowRectOrigin.Location.X;
-					m_CursorOffset.Y = args.Y - m_WindowRectOrigin.Location.Y;
-					m_WindowRectCurrent.Width = m_WindowRectOrigin.Width;
-					m_WindowRectCurrent.Height = m_WindowRectOrigin.Height;
+					m_WindowState.cursorOffset.X = args.X - m_WindowState.origin.Location.X;
+					m_WindowState.cursorOffset.Y = args.Y - m_WindowState.origin.Location.Y;
+					m_WindowState.position.Width = m_WindowState.origin.Width;
+					m_WindowState.position.Height = m_WindowState.origin.Height;
 				}
 			}
 		}
 
 		void OnMouseDragStartedExt(object sender, MouseEventExtArgs args)
 		{
-			if (m_DraggingWindowHandle == IntPtr.Zero)
+			if (m_WindowState.handle == IntPtr.Zero)
 				return;
 
-			m_IsDragging = true;
+			m_WindowState.isDragging = true;
 		}
 
 		void MouseDragFinishedExt(object sender, MouseEventExtArgs args)
 		{
-			if (!m_IsDragging)
+			if (!m_WindowState.isDragging)
 				return;
 
-			m_IsDragging = false;
-			m_DraggingWindowHandle = IntPtr.Zero;
+			m_WindowState.isDragging = false;
+			m_WindowState.handle = IntPtr.Zero;
 		}
 
 		void OnMouseMoveExt(object sender, MouseEventExtArgs args)
 		{
-			if (m_IsDragging)
+			if (m_WindowState.isDragging)
 			{
-				m_WindowRectCurrent.X = args.X - m_CursorOffset.X;
-				m_WindowRectCurrent.Y = args.Y - m_CursorOffset.Y;
+				m_WindowState.position.X = args.X - m_WindowState.cursorOffset.X;
+				m_WindowState.position.Y = args.Y - m_WindowState.cursorOffset.Y;
 
 				if (args.X <= 0)
 				{
-					m_WindowRectCurrent.X = 0;
-					m_WindowRectCurrent.Y = 0;
+					m_WindowState.position.X = 0;
+					m_WindowState.position.Y = 0;
 					Rectangle screenBounds = Screen.FromPoint(args.Location).Bounds;
-					m_WindowRectCurrent.Width = (int)(screenBounds.Width * .5);
-					m_WindowRectCurrent.Height = screenBounds.Height;
+					m_WindowState.position.Width = (int)(screenBounds.Width * .5);
+					m_WindowState.position.Height = screenBounds.Height;
 				}
 				else
-					m_WindowRectCurrent.Width = m_WindowRectOrigin.Width;
+					m_WindowState.position.Width = m_WindowState.origin.Width;
 
 				if (args.Y <= 0)
 				{
-					m_WindowRectCurrent.X = 0;
-					m_WindowRectCurrent.Y = 0;
+					m_WindowState.position.X = 0;
+					m_WindowState.position.Y = 0;
 					Rectangle screenBounds = Screen.FromPoint(args.Location).Bounds;
-					m_WindowRectCurrent.Width = screenBounds.Width;
-					m_WindowRectCurrent.Height = screenBounds.Height;
+					m_WindowState.position.Width = screenBounds.Width;
+					m_WindowState.position.Height = screenBounds.Height;
 				}
 				else
-					m_WindowRectCurrent.Height = m_WindowRectOrigin.Height;
-					
-				if (SetWindowPos(m_DraggingWindowHandle,
-					(int) InsertWindowOrder.Top,
-					m_WindowRectCurrent.X,
-					m_WindowRectCurrent.Y,
-					m_WindowRectCurrent.Width,
-					m_WindowRectCurrent.Height,
-					(uint)(
-						//SetWindowPositionFlags.NoSize |
-						SetWindowPositionFlags.NoZOrder |
-						SetWindowPositionFlags.ShowWindow
-					)) == IntPtr.Zero)
+					m_WindowState.position.Height = m_WindowState.origin.Height;
+
+				if(!WindowUtility.SetWindowPos(m_WindowState.handle, m_WindowState.position, SetWindowPositionFlags.NoZOrder | SetWindowPositionFlags.ShowWindow))
 				{
 #if DEBUG
-					Console.WriteLine("Failed to set window position: " + GetLastError());
+					Console.WriteLine("Failed to set window position: " + WindowUtility.GetLastError());
 #endif
 				}
 				else
