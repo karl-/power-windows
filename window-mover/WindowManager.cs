@@ -210,7 +210,13 @@ namespace Parabox.WindowMover
 				m_WindowState.handle = WindowUtility.WindowFromPoint(args.Location);
 				Rectangle windowRect = new Rectangle();
 
-				if(m_WindowState.handle != IntPtr.Zero && WindowUtility.GetWindowRect(m_WindowState.handle, ref windowRect))
+				WindowPlacement wp = new WindowPlacement();
+				if (WindowUtility.GetWindowPlacement(m_WindowState.handle, ref wp))
+				{
+					Console.WriteLine(wp.rcNormalPosition + "  " + wp.showState);
+				}
+
+				if (m_WindowState.handle != IntPtr.Zero && WindowUtility.GetWindowRect(m_WindowState.handle, ref windowRect))
 				{
 					m_DidUseKeyInput = true;
 					m_WindowState.origin = windowRect;
@@ -247,37 +253,12 @@ namespace Parabox.WindowMover
 				m_WindowState.position.X = args.X - m_WindowState.cursorOffset.X;
 				m_WindowState.position.Y = args.Y - m_WindowState.cursorOffset.Y;
 
-				if (args.X <= 0)
-				{
-					m_WindowState.position.X = 0;
-					m_WindowState.position.Y = 0;
-					Rectangle screenBounds = Screen.FromPoint(args.Location).Bounds;
-					m_WindowState.position.Width = (int)(screenBounds.Width * .5);
-					m_WindowState.position.Height = screenBounds.Height;
-				}
-				else
-					m_WindowState.position.Width = m_WindowState.origin.Width;
-
-				if (args.Y <= 0)
-				{
-					m_WindowState.position.X = 0;
-					m_WindowState.position.Y = 0;
-					Rectangle screenBounds = Screen.FromPoint(args.Location).Bounds;
-					m_WindowState.position.Width = screenBounds.Width;
-					m_WindowState.position.Height = screenBounds.Height;
-				}
-				else
-					m_WindowState.position.Height = m_WindowState.origin.Height;
-
 				if(!WindowUtility.SetWindowPos(m_WindowState.handle, m_WindowState.position, SetWindowPositionFlags.NoZOrder | SetWindowPositionFlags.ShowWindow))
-				{
 #if DEBUG
 					Console.WriteLine("Failed to set window position: " + WindowUtility.GetLastError());
+#else
+					;
 #endif
-				}
-				else
-				{
-				}
 			}
 		}
 	}
